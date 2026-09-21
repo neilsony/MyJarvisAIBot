@@ -1,0 +1,102 @@
+[project]
+name = "myjarvis"
+version = "0.1.0"
+description = "DmillsGPT — a voice-in/voice-out desk robot with an Arduino body"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.9",
+]
+
+[project.optional-dependencies]
+# Phase 0 — corpus pipeline. Heavy (torch ~2GB). Install only when you run the pipeline.
+pipeline = [
+    "yt-dlp>=2026.1.1",
+    # 4.x, not 3.x: the pipeline takes `token=` (not `use_auth_token=`) and
+    # returns a DiarizeOutput wrapper rather than a bare Annotation.
+    "pyannote.audio>=4.0",
+    "torch>=2.6",
+    "torchaudio>=2.6",
+    "numpy>=1.26",
+    "soundfile>=0.12",
+    "faster-whisper>=1.1",
+    # pyannote 4's checkpoint loader needs this to deserialize model configs;
+    # it's a transitive need pip doesn't always resolve on its own.
+    "omegaconf>=2.3",
+]
+# Phase 1+ — the brain service.
+brain = [
+    "openai>=1.50",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlite-vec>=0.1.6",
+    "sentence-transformers>=3.3",
+    "deepgram-sdk>=7.0",
+]
+# Google Calendar, via Google's own client libraries rather than a third-party
+# MCP server — see brain/tools/calendar.py for why.
+google = [
+    "google-api-python-client>=2.150",
+    "google-auth-oauthlib>=1.2",
+    "google-auth-httplib2>=0.2",
+]
+# Phase 2+ — audio I/O on the body.
+body = [
+    "sounddevice>=0.5",
+    "soundfile>=0.12",
+    "webrtcvad>=2.0.10",
+    "pyserial>=3.5",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "mypy>=1.13",
+    "ruff>=0.8",
+    "numpy>=1.26",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["brain", "body", "pipeline"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+# Heavy ML deps ship incomplete stubs; don't let that block our own type safety.
+[[tool.mypy.overrides]]
+module = [
+    "pyannote.*", "torch.*", "torchaudio.*", "yt_dlp.*", "soundfile.*",
+    "sklearn.*", "sentence_transformers.*", "faster_whisper.*",
+    "googleapiclient.*", "google_auth_oauthlib.*", "google.*",
+    # chatterbox only exists in .venv-tts; the server module that imports it
+    # never runs under this interpreter. See brain/tts/chatterbox_server.py.
+    "chatterbox.*", "librosa.*", "sounddevice.*",
+]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+# Tests get type checking but not the annotation ceremony — pytest functions
+# returning None and fixtures typed as Any add noise without catching bugs.
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# Google's auth libraries ship untyped functions; that's their business, not a
+# defect in our tool bodies. Our own signatures here stay fully typed.
+[[tool.mypy.overrides]]
+module = ["brain.tools.*"]
+disallow_untyped_decorators = false
+disallow_untyped_calls = false

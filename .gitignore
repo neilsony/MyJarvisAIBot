@@ -1,23 +1,52 @@
-### AL ###
-#Template for AL projects for Dynamics 365 Business Central
-#launch.json folder
+# ---------------------------------------------------------------
+# PRIVACY-CRITICAL — never commit these.
+# The Dmills voiceprint is a private, undistributed personal build.
+# Training audio and model weights stay on this machine, always.
+# ---------------------------------------------------------------
+# downloaded audio, transcripts, sqlite db
+data/
+# TTS model weights, reference clips, voiceprint datasets
+voices/
+# resume, goals, fandom — personal
+profile/
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.onnx
+*.ckpt
+*.pt
+*.pth
+.env
+.env.*
+!.env.example
+# Already covered by .env.* above, but spelled out because this one is the
+# decryption key for every encrypted value in .env. Committing it would make
+# the encryption worthless — it is the single worst file in the repo to leak.
+.env.keys
+# Leftover from before Google OAuth moved into .env as plain env vars — kept
+# ignored in case an old copy is still lying around locally.
+google_credentials.json
+google_token.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# --- macOS ---
+.DS_Store
+
+# --- Editors ---
 .vscode/
-#Cache folder
-.alcache/
-#Symbols folder
-.alpackages/
-#Snapshots folder
-.snapshots/
-#Testing Output folder
-.output/
-#Extension App-file
-*.app
-#Rapid Application Development File
-rad.json
-#Translation Base-file
-*.g.xlf
-#License-files
-*.bclicense
-*.flf
-#Test results file
-TestResults.xml
+.idea/
+
+# Personal planning doc — not for the repo
+MASTER-PLAN.md
