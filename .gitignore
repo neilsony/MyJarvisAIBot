@@ -50,3 +50,8 @@ build/
 
 # Personal planning doc — not for the repo
 MASTER-PLAN.md
+
+# transient pipeline run logs
+export-darrick.log
+ingest-oocok.log
+ingest-rest.log

@@ -253,8 +253,11 @@ See `SETUP.md` for the full step-by-step walkthrough (including the HuggingFace 
 ## To-do - from most to least urgent
 
 - Setup Canon library from initial 5 episodes
-- Improve prompt cache hit rate. Try moving all dynamic system data to the end of the backend prompt structure. All static/rarely changing content inserted first.
+- Improve prompt cache hit rate - Current = 29%, Goal = 75%. Try moving all dynamic system data to the end of the backend prompt structure. All static/rarely changing content inserted first.
 - Add a basic UI with just DMills face and animations
+- Add a Youtube Music tool
+- Add two personas: goofy and serious. Use seperate register.md for each and allow toggle in UI.
+- Revisit Pocket TTS to replace Chatterbox Turbo - Last attempt I wasn't happy with Pocket TTS voice quality, but it was 11x faster! Try to extract a better reference sample for the Pocket TTS voice model. Currently Chatterbox is way too slow but its quality is great - the TTS step during voice loop takes ~20 seconds on average or **85%** of total response time.
 - If possible, new UI tool: let dmills pullup audio clips from its canon if prompted by the user. **Goal** - let this agent be used to search for certain clips or info from NOTB
 - Deploy a basic version without my personal info to AWS
 - add a basic arduino & microphone only body
