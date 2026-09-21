@@ -249,3 +249,12 @@ voices/
 - **ruff** with `E, F, I, UP, B, SIM` at 100 columns.
 
 See `SETUP.md` for the full step-by-step walkthrough (including the HuggingFace gated-model process) and `MASTER-PLAN.md` for the architecture rationale.
+
+## To-do - from most to least urgent
+
+- Setup Canon library from initial 5 episodes
+- Improve prompt cache hit rate. Try moving all dynamic system data to the end of the backend prompt structure. All static/rarely changing content inserted first.
+- Add a basic UI with just DMills face and animations
+- If possible, new UI tool: let dmills pullup audio clips from its canon if prompted by the user. **Goal** - let this agent be used to search for certain clips or info from NOTB
+- Deploy a basic version without my personal info to AWS
+- add a basic arduino & microphone only body
