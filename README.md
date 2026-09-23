@@ -14,6 +14,7 @@ A voice-driven personal AI assistant with a distinct personality — cloned from
               │  ├── remember/recall ── long-term memory (SQLite) │
               │  ├── load_skill      ── on-demand instructions    │
               │  ├── calendar tools  ── Google Calendar (native)  │
+              │  ├── spotify tools   ── own player (librespot)    │
               │  └── web_search      ── live grounding            │
               ├──────────────────────────────────────────────────┤
               │  TTS daemon (Chatterbox-Turbo, voice-cloned)      │
@@ -38,13 +39,14 @@ The system is three independent subsystems with deliberately narrow interfaces:
 ### Agent (`brain/`)
 
 - **Native tool-calling loop** against OpenRouter (default model: `z-ai/glm-5.3-flash`, OpenAI-compatible API). The loop lives in `brain/agent.py`: send messages → execute requested tools → feed results back, until the model answers.
-- **Eight on-demand tools**, no context bloat — nothing is auto-injected:
+- **Twelve on-demand tools**, no context bloat — nothing is auto-injected:
   - `search_show` — semantic retrieval over the "Canon" store (transcribed, chunked, and embedded show corpus in SQLite + `sqlite-vec`).
   - `remember` / `recall` — persistent long-term memory, stored locally in SQLite.
   - `load_skill` — pulls the full text of a named skill file (markdown with frontmatter) only when a turn actually needs it. The agent's system prompt stays small; a spoken-reply bot cannot afford pages of procedure on every turn.
   - `get_calendar_events`, `create_calendar_event`, `update_calendar_event` — native Google Calendar integration (Google's own client libraries, not an MCP server). OAuth credentials live as environment variables; the access token auto-refreshes and rewrites itself into `.env`.
+  - `play_music`, `pause_music`, `resume_music`, `skip_track` — Spotify playback control (optional; Premium required). Plays through the bot's own headless player, "DmillsGPT" (librespot, started with the Brain), or whatever device has Spotify open if that isn't set up. Playback only: no library or playlist edits.
   - `web_search` — live web grounding for anything the corpus can't answer.
-- **Strict, safe tool surface** — the agent has no filesystem access, no shell, no editing. Everything is read-mostly: search, remember, recall, calendar.
+- **Strict, safe tool surface** — the agent has no filesystem access, no shell, no editing. Everything is read-mostly: search, remember, recall, calendar, music playback.
 - **Persona** — a tuned voice register (`brain/persona/register.md`) plus user-profile context (`profile/`), including a fandom file that shapes tone without ever being treated as a source of facts.
 - **Skill discovery** — skills are markdown files with strict frontmatter; a malformed file raises rather than being silently ignored.
 

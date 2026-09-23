@@ -19,9 +19,11 @@ from brain.config import Settings
 from brain.embeddings import embed_one
 from brain.persona.prompt import build_system_prompt, format_context_block
 from brain.skills import discover_skills
+from brain.spotify_player import LibrespotPlayer, connect_player
 from brain.store.db import Store
 from brain.tools.calendar import build_calendar_dispatch, calendar_schemas, connect_calendar
 from brain.tools.jarvis_tools import build_tool_dispatch, build_tool_schemas, parse_tool_arguments
+from brain.tools.spotify import build_spotify_dispatch, connect_spotify, spotify_schemas
 from brain.tools.web_search import build_web_search_dispatch, web_search_schemas
 
 __all__ = ["Jarvis", "load_persona"]
@@ -96,6 +98,23 @@ class Jarvis:
             self._tool_schemas += calendar_schemas()
             self._tool_dispatch |= build_calendar_dispatch(calendar)
 
+        # Spotify is optional the same way: no SPOTIFY_CLIENT_ID/SECRET, no
+        # playback tools. The bot's own player (librespot) is optional on top
+        # of that — without it, playback goes to whatever has Spotify open.
+        self._spotify_player: LibrespotPlayer | None = None
+        spotify = connect_spotify(
+            settings.spotify_client_id,
+            settings.spotify_client_secret,
+            settings.spotify_token_json,
+            settings.env_file,
+        )
+        if spotify is not None:
+            self._spotify_player = connect_player(settings.data_dir)
+            self._tool_schemas += spotify_schemas()
+            self._tool_dispatch |= build_spotify_dispatch(
+                spotify, settings.spotify_device_name, self._spotify_player
+            )
+
         # Web search rides on the same OpenRouter key, so it's available
         # whenever the agent itself is. On-demand only — see web_search.py.
         if settings.openrouter_api_key:
@@ -134,9 +153,15 @@ class Jarvis:
             base_url=OPENROUTER_BASE_URL,
             api_key=self.settings.require("openrouter_api_key"),
         )
+        # Started now, not on the first "play", so it has registered with
+        # Spotify by the time anyone asks for music.
+        if self._spotify_player is not None:
+            self._spotify_player.ensure_running()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
+        if self._spotify_player is not None:
+            self._spotify_player.stop()
         if self._client is not None:
             await self._client.close()
             self._client = None

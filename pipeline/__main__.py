@@ -39,6 +39,33 @@ def _paths(settings: Settings) -> tuple[Path, Path, Path, Path]:
     return audio, turns, labels, voice
 
 
+def _solo_reference_clips(settings: Settings) -> list[Path]:
+    """Up to two clips per solo video, for building a ground-truth reference.
+
+    Solo audio has no 4-way separation problem, so these clips are ground
+    truth by construction — unlike anything pulled from a show episode, which
+    would presuppose the very label correctness `verify-speakers`/`diarize`
+    exist to question. Shared by every command that needs a Darrick
+    reference embedding derived this way.
+    """
+    _, _, _, voice_dir = _paths(settings)
+    solo_audio_dir = settings.data_dir / "solo_audio"
+    solo_stems = {p.stem for p in solo_audio_dir.glob("*.wav")}
+    manifest = _voice_manifest(voice_dir)
+    solo_sources = sorted({str(c["source"]) for c in manifest
+                           if Path(str(c["source"])).stem in solo_stems})
+
+    reference_clips: list[Path] = []
+    for source in solo_sources:
+        clips = sorted(
+            (voice_dir / "clips").glob(f"{Path(source).stem}_*.wav"),
+            key=lambda p: p.stat().st_size,
+            reverse=True,
+        )
+        reference_clips.extend(clips[:2])
+    return reference_clips
+
+
 def cmd_status(settings: Settings, _args: argparse.Namespace) -> int:
     audio_dir, turns_dir, labels_file, voice_dir = _paths(settings)
     episodes = sorted(audio_dir.glob("*.wav")) if audio_dir.is_dir() else []
@@ -242,7 +269,9 @@ def cmd_voiceprint_solo(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def cmd_diarize(settings: Settings, _args: argparse.Namespace) -> int:
-    from pipeline.diarize import diarize
+    from pipeline.diarize import bimodal_labels, diarize
+    from pipeline.identify import _inference, build_reference
+    from pipeline.verify_speakers import embed_turn_crop, load_label_reports
 
     token = settings.require("hf_token")
     audio_dir, turns_dir, *_ = _paths(settings)
@@ -251,13 +280,40 @@ def cmd_diarize(settings: Settings, _args: argparse.Namespace) -> int:
         print("No audio yet. Run: python -m pipeline fetch --limit 20", file=sys.stderr)
         return 1
 
+    # Verification rides along with diarization when a Darrick reference
+    # already exists (built once here, not per file) — see diarize()'s
+    # verify_embed/verify_reference params. Without one yet, diarize still
+    # runs; there's just no confidence pass to flag a merged label with.
+    reference_clips = _solo_reference_clips(settings)
+    reference = build_reference(reference_clips, token) if reference_clips else None
+    inference = _inference(token) if reference is not None else None
+    if reference is None:
+        print("No solo reference yet (run voiceprint-solo) — skipping label verification.\n")
+
     for i, audio in enumerate(files, 1):
         cache = turns_dir / f"{audio.stem}.json"
+        conf_cache = turns_dir / f"{audio.stem}.conf.json"
         state = "cached" if cache.is_file() else "diarizing (minutes)"
         print(f"[{i}/{len(files)}] {audio.stem} — {state}")
-        turns = diarize(audio, token, cache_path=cache)
+        turns = diarize(
+            audio,
+            token,
+            cache_path=cache,
+            verify_embed=embed_turn_crop(inference, str(audio)) if inference is not None else None,
+            verify_reference=reference,
+            conf_cache_path=conf_cache if reference is not None else None,
+        )
         speakers = sorted({t.speaker for t in turns})
         print(f"    {len(turns)} turns, {len(speakers)} speakers: {', '.join(speakers)}")
+
+        reports = load_label_reports(conf_cache) if reference is not None else None
+        if reports:
+            for r in bimodal_labels(reports):
+                print(
+                    f"    FLAGGED {r.label}: bimodal (high {r.high_median:.3f}, "
+                    f"low {r.low_median:.3f}) — likely two speakers merged. "
+                    f"Run: python -m pipeline verify-speakers {audio.stem}"
+                )
     return 0
 
 
@@ -584,7 +640,7 @@ def cmd_verify_speakers(settings: Settings, args: argparse.Namespace) -> int:
     )
 
     token = settings.require("hf_token")
-    audio_dir, turns_dir, _, voice_dir = _paths(settings)
+    audio_dir, turns_dir, _, _ = _paths(settings)
     audio = audio_dir / f"{args.episode}.wav"
     turns = load_turns(turns_dir / f"{args.episode}.json")
     if turns is None or not audio.is_file():
@@ -594,28 +650,7 @@ def cmd_verify_speakers(settings: Settings, args: argparse.Namespace) -> int:
         )
         return 1
 
-    # Reference from SOLO clips only: solo audio has no 4-way separation
-    # problem, so those clips are ground truth by construction. Show-derived
-    # clips would assume the very label correctness this command exists to
-    # question. Two clean clips per solo video is plenty for a centroid.
-    solo_audio_dir = settings.data_dir / "solo_audio"
-    solo_stems = {p.stem for p in solo_audio_dir.glob("*.wav")}
-    manifest = _voice_manifest(voice_dir)
-    solo_sources = sorted({str(c["source"]) for c in manifest
-                           if Path(str(c["source"])).stem in solo_stems})
-    if not solo_sources:
-        print("No solo clips found. Run: python -m pipeline fetch-solo && diarize-solo",
-              file=sys.stderr)
-        return 1
-
-    reference_clips: list[Path] = []
-    for source in solo_sources:
-        clips = sorted(
-            (voice_dir / "clips").glob(f"{Path(source).stem}_*.wav"),
-            key=lambda p: p.stat().st_size,
-            reverse=True,
-        )
-        reference_clips.extend(clips[:2])
+    reference_clips = _solo_reference_clips(settings)
     if not reference_clips:
         print("No solo clips in voices/dmills/clips. Run voiceprint-solo first.", file=sys.stderr)
         return 1
@@ -669,7 +704,7 @@ def cmd_export_darrick_turns(settings: Settings, args: argparse.Namespace) -> in
     )
 
     token = settings.require("hf_token")
-    audio_dir, turns_dir, _, voice_dir = _paths(settings)
+    audio_dir, turns_dir, _, _ = _paths(settings)
     audio = audio_dir / f"{args.episode}.wav"
     turns = load_turns(turns_dir / f"{args.episode}.json")
     if turns is None or not audio.is_file():
@@ -679,19 +714,7 @@ def cmd_export_darrick_turns(settings: Settings, args: argparse.Namespace) -> in
         )
         return 1
 
-    solo_audio_dir = settings.data_dir / "solo_audio"
-    solo_stems = {p.stem for p in solo_audio_dir.glob("*.wav")}
-    manifest = _voice_manifest(voice_dir)
-    solo_sources = sorted({str(c["source"]) for c in manifest
-                           if Path(str(c["source"])).stem in solo_stems})
-    reference_clips: list[Path] = []
-    for source in solo_sources:
-        clips = sorted(
-            (voice_dir / "clips").glob(f"{Path(source).stem}_*.wav"),
-            key=lambda p: p.stat().st_size,
-            reverse=True,
-        )
-        reference_clips.extend(clips[:2])
+    reference_clips = _solo_reference_clips(settings)
     if not reference_clips:
         print("No solo clips in voices/dmills/clips. Run voiceprint-solo first.", file=sys.stderr)
         return 1

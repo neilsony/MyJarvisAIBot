@@ -317,3 +317,40 @@ of how he talks. Add to it only when you notice retrieval missing something —
 a recurring bit, a verbal tic, a stance he always takes.
 
 Edit, restart the CLI, talk to it again. That's the loop.
+
+## 14. Spotify (optional, ~5 min)
+
+Lets you say "play GNX", "pause", "resume", "skip". Needs **Spotify Premium**:
+the Web API refuses playback control on free accounts. The bot is a remote, not
+a speaker, so Spotify has to be open on your Mac or phone.
+
+1. At <https://developer.spotify.com/dashboard>, create an app. Tick **Web API**,
+   and add this redirect URI **exactly** (Spotify rejects `localhost`):
+   `http://127.0.0.1:8888/callback`
+2. Copy the app's Client ID and Client Secret into `.env`:
+
+```bash
+# edit .env, set SPOTIFY_CLIENT_ID=... and SPOTIFY_CLIENT_SECRET=...
+# optionally SPOTIFY_DEVICE_NAME=Web Player  (only to pick between several open devices)
+pip install -e '.[spotify]'
+python -m brain.authorize_spotify
+```
+
+That opens a browser once. After you approve, it writes `SPOTIFY_TOKEN_JSON`
+into `.env`. The bot refreshes that token itself from then on. Without the
+client ID and secret, the bot runs as before with no Spotify tools.
+
+3. **Give the bot its own speaker** (recommended). Without this, music goes to
+   whatever device already has Spotify open, which you have to open by hand.
+   With it, the bot starts a hidden Spotify player called **DmillsGPT** when it
+   starts, and always plays there, through this machine's speakers:
+
+```bash
+brew install librespot
+python -m brain.authorize_spotify --player   # sign in with the SAME Spotify account
+```
+
+That signs the player in once and saves its login to `data/librespot/`
+(gitignored, readable by you only). It's the one Spotify credential outside
+`.env`, because librespot only reads its own file format. If the player ever
+fails to start, its log is `data/librespot/librespot.log`.

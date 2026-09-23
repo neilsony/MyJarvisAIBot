@@ -31,9 +31,11 @@ with two listens instead of twenty.
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -47,10 +49,13 @@ __all__ = [
     "TurnScore",
     "ear_check_turns",
     "label_reports",
+    "load_label_reports",
     "middle_slice",
     "rank_labels",
+    "save_label_reports",
     "score_turns",
     "select_slice_turns",
+    "verify_labels",
 ]
 
 
@@ -271,6 +276,77 @@ def format_report(
         lines.append("  this slice, or merged so deeply his turns never score alone.")
         lines.append("  Try a wider slice before concluding he is missing.")
     return "\n".join(lines)
+
+
+def verify_labels(
+    embed_turn: Callable[[Turn], np.ndarray],
+    turns: Sequence[Turn],
+    reference: np.ndarray,
+    *,
+    min_duration: float = MIN_DURATION,
+    min_score: float = MIN_SCORE,
+) -> list[LabelReport]:
+    """Score every turn of a whole episode and report per-label distributions.
+
+    This is the same machinery `verify-speakers` uses on a slice, run instead
+    over everything the diarizer produced — so it can live inside `diarize`
+    itself and flag a merged label the moment it's created, instead of
+    waiting for a human to run a separate command over evidence that's
+    already sitting in memory.
+    """
+    candidates = [t for t in turns if t.duration >= min_duration]
+    if not candidates:
+        return []
+    scores = score_turns(embed_turn, candidates, reference)
+    return label_reports(scores, min_score=min_score)
+
+
+def reports_to_records(reports: Sequence[LabelReport]) -> list[dict[str, Any]]:
+    """`LabelReport`s as plain JSON-safe dicts, for `save_label_reports`."""
+    return [
+        {
+            "label": r.label,
+            "turn_count": r.turn_count,
+            "above_threshold": r.above_threshold,
+            "median": r.median,
+            "high_median": r.high_median,
+            "low_median": r.low_median,
+        }
+        for r in reports
+    ]
+
+
+def records_to_reports(records: Sequence[dict[str, Any]]) -> list[LabelReport]:
+    """Rebuild `LabelReport`s from `reports_to_records` output."""
+    return [
+        LabelReport(
+            label=str(r["label"]),
+            turn_count=int(r["turn_count"]),
+            above_threshold=int(r["above_threshold"]),
+            median=float(r["median"]),
+            high_median=float(r["high_median"]) if r["high_median"] is not None else None,
+            low_median=float(r["low_median"]) if r["low_median"] is not None else None,
+        )
+        for r in records
+    ]
+
+
+def save_label_reports(path: Path, reports: Sequence[LabelReport]) -> None:
+    """Write label confidence reports to `path`, alongside the turns cache.
+
+    A parallel file, not a rewrite of the turns cache: diarization output
+    stays immutable evidence, and this is a separate, later-computed opinion
+    about it. Same split as `save_turns`/`load_turns`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(reports_to_records(reports), indent=2), encoding="utf-8")
+
+
+def load_label_reports(path: Path) -> list[LabelReport] | None:
+    """Read cached label reports, or None when there is no cache yet."""
+    if not path.is_file():
+        return None
+    return records_to_reports(json.loads(path.read_text(encoding="utf-8")))
 
 
 def embed_turn_crop(inference: Any, audio_path: str) -> Callable[[Turn], np.ndarray]:

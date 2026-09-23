@@ -39,6 +39,8 @@ _ENV_NAMES = {
     "openrouter_api_key": "OPENROUTER_API_KEY",
     "google_client_id": "GOOGLE_CLIENT_ID",
     "google_client_secret": "GOOGLE_CLIENT_SECRET",
+    "spotify_client_id": "SPOTIFY_CLIENT_ID",
+    "spotify_client_secret": "SPOTIFY_CLIENT_SECRET",
 }
 
 
@@ -120,7 +122,7 @@ def set_env_value(path: Path, key: str, value: str) -> None:
     """Write one `KEY=value` line into a dotenv file, touching nothing else.
 
     For values that legitimately change at runtime and must persist — right
-    now, only the Google OAuth token after it refreshes. Everything else in
+    now, only the Google and Spotify OAuth tokens after they refresh. Everything else in
     the file (comments, blank lines, other keys) is preserved byte-for-byte;
     only the matching `KEY=` line is replaced, or appended if absent.
 
@@ -191,6 +193,13 @@ class Settings:
     google_client_id: str | None
     google_client_secret: str | None
     google_token_json: str | None
+    # Spotify OAuth — same arrangement as Google; see brain/tools/spotify.py.
+    # `spotify_device_name` is an optional tiebreaker when several devices
+    # have Spotify open and none is active (a substring of its name).
+    spotify_client_id: str | None
+    spotify_client_secret: str | None
+    spotify_token_json: str | None
+    spotify_device_name: str | None
     env_file: Path
 
     @classmethod
@@ -228,6 +237,10 @@ class Settings:
             google_client_id=get("GOOGLE_CLIENT_ID"),
             google_client_secret=get("GOOGLE_CLIENT_SECRET"),
             google_token_json=get("GOOGLE_TOKEN_JSON"),
+            spotify_client_id=get("SPOTIFY_CLIENT_ID"),
+            spotify_client_secret=get("SPOTIFY_CLIENT_SECRET"),
+            spotify_token_json=get("SPOTIFY_TOKEN_JSON"),
+            spotify_device_name=get("SPOTIFY_DEVICE_NAME"),
             env_file=resolved_env_file,
         )
 

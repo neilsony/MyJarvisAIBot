@@ -5,6 +5,8 @@ into a plausible centroid — is exactly what the tests pin down: distributions,
 not averages, are the contract.
 """
 
+import json
+
 import numpy as np
 import pytest
 
@@ -14,10 +16,15 @@ from pipeline.verify_speakers import (
     TurnScore,
     ear_check_turns,
     label_reports,
+    load_label_reports,
     middle_slice,
     rank_labels,
+    records_to_reports,
+    reports_to_records,
+    save_label_reports,
     score_turns,
     select_slice_turns,
+    verify_labels,
 )
 
 
@@ -207,3 +214,53 @@ class TestEarCheckTurns:
         top, bottom = ear_check_turns(scores, "A", per_side=3)
         assert len(top) == 2
         assert bottom == []
+
+
+class TestVerifyLabels:
+    def test_scores_only_long_enough_turns(self):
+        turns = [t("A", 0, 5), t("A", 5, 6)]  # second is under MIN_DURATION (3s)
+
+        def embed(turn):
+            return unit(4, 0)
+
+        reports = verify_labels(embed, turns, reference=unit(4, 0))
+        assert len(reports) == 1
+        assert reports[0].turn_count == 1
+
+    def test_empty_when_nothing_long_enough(self):
+        turns = [t("A", 0, 1)]
+        reports = verify_labels(lambda turn: unit(4, 0), turns, reference=unit(4, 0))
+        assert reports == []
+
+    def test_flags_a_merged_label_as_bimodal(self):
+        # Darrick's turns embed near the reference; the co-host's don't.
+        turns = [t("A", 0, 5), t("A", 10, 15), t("A", 20, 25), t("A", 30, 35)]
+
+        def embed(turn):
+            return unit(4, 0) if turn.start < 20 else unit(4, 1)
+
+        reports = verify_labels(embed, turns, reference=unit(4, 0), min_score=0.5)
+        assert len(reports) == 1
+        assert reports[0].bimodal
+
+
+class TestLabelReportRoundTrip:
+    def test_records_round_trip_exactly(self):
+        reports = [
+            LabelReport("SPEAKER_00", 10, 8, 0.72, 0.80, 0.20),
+            LabelReport("SPEAKER_01", 3, 0, 0.10, None, 0.10),
+        ]
+        assert records_to_reports(reports_to_records(reports)) == reports
+
+    def test_records_are_json_serialisable(self):
+        records = reports_to_records([LabelReport("SPEAKER_00", 1, 1, 0.9, 0.9, None)])
+        assert json.loads(json.dumps(records)) == records
+
+    def test_save_then_load(self, tmp_path):
+        reports = [LabelReport("SPEAKER_00", 4, 2, 0.5, 0.7, 0.2)]
+        path = tmp_path / "ep.conf.json"
+        save_label_reports(path, reports)
+        assert load_label_reports(path) == reports
+
+    def test_load_missing_file_returns_none(self, tmp_path):
+        assert load_label_reports(tmp_path / "absent.json") is None

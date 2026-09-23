@@ -39,6 +39,11 @@ google = [
     "google-auth-oauthlib>=1.2",
     "google-auth-httplib2>=0.2",
 ]
+# Spotify playback control, via spotipy rather than a third-party MCP server —
+# see brain/tools/spotify.py for why.
+spotify = [
+    "spotipy>=2.24",
+]
 # Phase 2+ — audio I/O on the body.
 body = [
     "sounddevice>=0.5",
@@ -73,7 +78,7 @@ strict = true
 module = [
     "pyannote.*", "torch.*", "torchaudio.*", "yt_dlp.*", "soundfile.*",
     "sklearn.*", "sentence_transformers.*", "faster_whisper.*",
-    "googleapiclient.*", "google_auth_oauthlib.*", "google.*",
+    "googleapiclient.*", "google_auth_oauthlib.*", "google.*", "spotipy.*",
     # chatterbox only exists in .venv-tts; the server module that imports it
     # never runs under this interpreter. See brain/tts/chatterbox_server.py.
     "chatterbox.*", "librosa.*", "sounddevice.*",
