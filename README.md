@@ -1,4 +1,4 @@
-# DmillsGPT (MyJarvisAIBot)
+# DmillsGPT
 
 ![MillsGPT web UI](docs/ui-screenshot.png)
 
