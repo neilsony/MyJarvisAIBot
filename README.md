@@ -78,12 +78,11 @@ The hard problem this project solves: extract one person's voice from multi-spea
 
 | Component | Status |
 |---|---|
-| Agent (tools, memory, skills, calendar, web) | ✅ Live, 301 tests passing |
+| Agent (tools, memory, skills, calendar, web) | ✅ Live, 405 tests passing |
 | Voice loop (STT + TTS, push-to-talk) | ✅ Live |
 | Voiceprint dataset | ✅ 205 clips / 29.6 min / 6 sources (4 solo videos + 2 confirmed show episodes) |
 | TTS reference voice | ✅ `voices/dmills/reference.wav` (33 s clean turn) |
-| Show diarization | 🔄 4/5 episodes done, 5th in progress |
-| Canon store | ⏳ Empty — `ingest` runs after diarization finishes |
+| Canon store | ✅ 1,686 chunks ingested |
 | `.env` encryption (dotenvx) | ⏳ Guards in place; final encrypt step pending |
 
 ---
@@ -132,7 +131,7 @@ python -m brain.tts.chatterbox_client "text"
 ### Quality gates
 
 ```bash
-pytest                                    # 301 tests
+pytest                                    # 405 tests
 mypy brain body pipeline                  # strict mode
 ruff check . && ruff format --check .
 ```
@@ -214,7 +213,7 @@ Everything lives in `.env` (gitignored; see `.env.example`). Real environment va
 
 | Variable | Required for | Notes |
 |---|---|---|
-| `HF_TOKEN` | `pipeline diarize` / `identify` | pyannote's three gated models need one-time terms acceptance on HuggingFace (see SETUP.md step 3) |
+| `HF_TOKEN` | `pipeline diarize` / `identify` | pyannote's three gated models need one-time terms acceptance on HuggingFace |
 | `OPENROUTER_API_KEY` | agent (`brain.cli`, voice loop) | pay-as-you-go |
 | `OPENROUTER_MODEL` | — | default `z-ai/glm-5.3-flash` |
 | `DEEPGRAM_API_KEY` | voice loop | not needed in text mode |
@@ -250,17 +249,16 @@ voices/
 
 ## Testing & code standards
 
-- **301 tests** (`pytest`), all passing — segment filtering, crosstalk rejection, speaker matching, persistence, tool schemas, prompt assembly, config parsing, and the agent loop are all covered without network access.
+- **405 tests** (`pytest`), all passing — segment filtering, crosstalk rejection, speaker matching, persistence, tool schemas, prompt assembly, config parsing, and the agent loop are all covered without network access.
 - **mypy strict mode** across all three packages, with targeted, documented exceptions for untyped third-party ML libraries.
 - **ruff** with `E, F, I, UP, B, SIM` at 100 columns.
 
-See `SETUP.md` for the full step-by-step walkthrough (including the HuggingFace gated-model process) and `MASTER-PLAN.md` for the architecture rationale.
+See `MASTER-PLAN.md` for the architecture rationale.
 
 ## To-do - from most to least urgent
 
 - Setup Canon library from initial 5 episodes
 - Improve prompt cache hit rate - Current = 29%, Goal = 75%. Try moving all dynamic system data to the end of the backend prompt structure. All static/rarely changing content inserted first.
-- Add a basic UI with just DMills face and animations
 - Add a Youtube Music tool
 - Add two personas: goofy and serious. Use seperate register.md for each and allow toggle in UI.
 - Revisit Pocket TTS to replace Chatterbox Turbo - Last attempt I wasn't happy with Pocket TTS voice quality, but it was 11x faster! Try to extract a better reference sample for the Pocket TTS voice model. Currently Chatterbox is way too slow but its quality is great - the TTS step during voice loop takes ~20 seconds on average or **85%** of total response time.
