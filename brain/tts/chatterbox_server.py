@@ -34,20 +34,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# librosa.resample() hands back float64 in this version while the model's
-# weights are float32, which crashes inside the mel filterbank. Patch it here,
-# before chatterbox is imported, rather than editing site-packages.
-import librosa  # noqa: E402
-import numpy as np  # noqa: E402
-
-_orig_resample = librosa.resample
-
-
-def _resample_f32(*args: Any, **kwargs: Any) -> Any:
-    return _orig_resample(*args, **kwargs).astype(np.float32)
-
-
-librosa.resample = _resample_f32
+import numpy as np
 
 SOCKET_PATH = Path("/tmp/dmills-tts.sock")
 # Duplicated from chatterbox_client.py rather than imported: this module runs
@@ -81,10 +68,13 @@ class _Handler(socketserver.StreamRequestHandler):
                 out_path = Path(request["out"])
                 out_path.parent.mkdir(parents=True, exist_ok=True)
 
+                # Whole reply in one call, deliberately. Per-sentence generation
+                # with silences between was tried: it fixed the breathless
+                # run-ons but sounded stilted by ear. Run-ons are fixed upstream
+                # instead — the prompt asks for short, speakable sentences
+                # (brain/persona/prompt.py), which Turbo reads fine in one go.
                 # No audio_prompt_path: the reference was conditioned once at
-                # startup (see main()), and re-passing it here would redo that
-                # work on every line — exactly the per-utterance cost this
-                # daemon exists to avoid paying twice, let alone every run.
+                # startup (see main()), and re-passing it would redo that work.
                 wav = model.generate(text)
                 # soundfile rather than torchaudio.save: newer torchaudio
                 # routes saving through torchcodec, not installed here and not
@@ -101,6 +91,22 @@ class TTSServer(socketserver.UnixStreamServer):
         super().__init__(address, _Handler)
 
 
+def _patch_librosa_resample() -> None:
+    """librosa.resample() hands back float64 in this version while the model's
+    weights are float32, which crashes inside the mel filterbank. Patched just
+    before chatterbox is imported, rather than editing site-packages — and
+    here rather than at import time, so importing this module (the tests do)
+    doesn't quietly change librosa for everyone else in the process."""
+    import librosa
+
+    original = librosa.resample
+
+    def resample_f32(*args: Any, **kwargs: Any) -> Any:
+        return original(*args, **kwargs).astype(np.float32)
+
+    librosa.resample = resample_f32
+
+
 def main() -> int:
     reference = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_REFERENCE
     if not reference.is_file():
@@ -112,6 +118,7 @@ def main() -> int:
         # actually listening, so it's safe to clear before rebinding.
         SOCKET_PATH.unlink()
 
+    _patch_librosa_resample()
     from chatterbox.tts_turbo import ChatterboxTurboTTS
 
     print("Loading model (first time only, ~30s)...", file=sys.stderr)

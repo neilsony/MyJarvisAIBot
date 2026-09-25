@@ -6,7 +6,9 @@ voice" design), and the register's own editor's-note comment was leaking into
 the model's actual system prompt.
 """
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -94,3 +96,47 @@ class TestRetrieve:
         jarvis = self._jarvis(tmp_path, monkeypatch)
         monkeypatch.setattr("brain.agent.embed_one", lambda _text: vec(1, 0))
         assert jarvis.retrieve("add lunch to my calendar") == ""
+
+
+class LoopingClient:
+    """Stands in for AsyncOpenAI: always asks for another search, unless told
+    it can't use tools — then it answers."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    async def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("tool_choice") == "none":
+            message = SimpleNamespace(content="Here's what I found.", tool_calls=None)
+        else:
+            call = SimpleNamespace(
+                id=f"call{len(self.calls)}",
+                function=SimpleNamespace(name="search_show", arguments='{"query": "Knicks"}'),
+            )
+            message = SimpleNamespace(content=None, tool_calls=[call])
+        message.model_dump = lambda **_: {"role": "assistant", "content": message.content}
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
+class TestToolRounds:
+    def test_out_of_rounds_answers_from_what_it_found(self, tmp_path):
+        from brain import agent as agent_module
+
+        settings = Settings.load(env_file=tmp_path / "none")
+        jarvis = Jarvis(settings, Store(tmp_path / "test.db"))
+        client = LoopingClient()
+        jarvis._client = client
+        jarvis.retrieve = lambda _message: ""
+
+        async def fake_search(_args):
+            return "a transcript excerpt"
+
+        jarvis._tool_dispatch["search_show"] = fake_search
+
+        reply = asyncio.run(jarvis.ask("what did they say about the Knicks?"))
+
+        assert reply == "Here's what I found."
+        assert len(client.calls) == agent_module.MAX_TOOL_ROUNDS + 1
+        assert client.calls[-1]["tool_choice"] == "none"

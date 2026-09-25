@@ -27,6 +27,12 @@ believes*. A retrieval artifact over the transcript corpus.
 **Body** — the audio loop, LEDs, and Arduino peripherals. A client of the Brain.
 The seam between them is a WebSocket, which is why the Body can later be a phone.
 
+**Body state** — what the Body is doing right now, always exactly one of:
+**idle** (waiting to be asked), **listening** (the mic is open for Neil),
+**thinking** (from the mic closing until his voice starts: transcribing,
+reasoning, and synthesizing all count), **speaking** (his reply is playing).
+Listening means the mic is open, not that anyone is making sound.
+
 **Turn** — one contiguous stretch of a single speaker talking. The atom of the
 corpus pipeline.
 

@@ -32,19 +32,7 @@ them `SPEAKER_00`, `SPEAKER_01`, `SPEAKER_02`, `SPEAKER_03`.
 Worse, **the numbers are random for each episode.** `SPEAKER_00` might be Kenny
 in one episode and Darrick in the next. There is no consistency to rely on.
 
-### Why we can't skip it
-
-If you train a voice clone on audio where Kenny is laughing over Darrick, the
-model learns "this person sometimes sounds like Kenny." Feed it enough of that
-and you get a voice that's nobody in particular — an average of four men.
-
-It's like trying to learn someone's handwriting from a page where four people
-wrote on top of each other.
-
-So we need clips where Darrick talks **alone and uninterrupted.** Diarization is
-what makes finding those possible.
-
-### The trick that makes it work: a voice fingerprint
+### Labeling the Speakers
 
 Since the speaker numbers are random per episode, we can't just say "Darrick is
 SPEAKER_02" once and be done. We'd have to check all 500 episodes by hand.
@@ -320,7 +308,7 @@ Edit, restart the CLI, talk to it again. That's the loop.
 
 ## 14. Spotify (optional, ~5 min)
 
-Lets you say "play GNX", "pause", "resume", "skip". Needs **Spotify Premium**:
+Lets you say "play [X song]", "queue [X song]", "pause", "resume", "skip". Needs **Spotify Premium**:
 the Web API refuses playback control on free accounts. The bot is a remote, not
 a speaker, so Spotify has to be open on your Mac or phone.
 

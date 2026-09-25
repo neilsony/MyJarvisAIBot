@@ -12,6 +12,7 @@ import pytest
 
 from brain.tools.spotify import (
     EnvTokenStore,
+    MusicDucker,
     build_spotify_dispatch,
     connect_spotify,
     spotify_schemas,
@@ -42,6 +43,7 @@ class FakeSpotifyClient:
         self.played: list[dict] = []
         self.paused = 0
         self.skipped = 0
+        self.queued: list[str] = []
 
     def devices(self):
         return {"devices": self._devices}
@@ -67,6 +69,11 @@ class FakeSpotifyClient:
         if self._error:
             raise self._error
         self.skipped += 1
+
+    def add_to_queue(self, uri, device_id=None):
+        if self._error:
+            raise self._error
+        self.queued.append(uri)
 
 
 GNX = {"name": "GNX", "uri": "spotify:track:gnx", "artists": [{"name": "Kendrick Lamar"}]}
@@ -225,6 +232,64 @@ class TestOwnPlayer:
         assert client.played[0]["device_id"] == "bot-id"
 
 
+class MultiTrackClient(FakeSpotifyClient):
+    """Search answers per query, so several songs can be queued in one go."""
+
+    def __init__(self, tracks, **kwargs):
+        super().__init__(**kwargs)
+        self._tracks = tracks
+
+    def search(self, q, limit=10, offset=0, type="track", market=None):  # noqa: A002
+        hit = self._tracks.get(q)
+        return {"tracks": {"items": [hit] if hit else []}}
+
+
+LUTHER = {"name": "Luther", "uri": "spotify:track:luther", "artists": [{"name": "Kendrick Lamar"}]}
+TV_OFF = {"name": "TV Off", "uri": "spotify:track:tvoff", "artists": [{"name": "Kendrick Lamar"}]}
+
+
+class TestQueue:
+    def test_queues_the_found_track_without_interrupting(self):
+        client = FakeSpotifyClient(devices=[PHONE], results={"track": [GNX]})
+        got = call(dispatch_for(client), "queue_track", {"songs": ["GNX"]})
+        assert client.queued == ["spotify:track:gnx"]
+        assert client.played == []
+        assert got == "Queued GNX by Kendrick Lamar."
+
+    def test_queues_several_in_the_order_asked(self):
+        client = MultiTrackClient({"gnx": GNX, "luther": LUTHER, "tv off": TV_OFF})
+        got = call(dispatch_for(client), "queue_track", {"songs": ["luther", "gnx", "tv off"]})
+        assert client.queued == ["spotify:track:luther", "spotify:track:gnx", "spotify:track:tvoff"]
+        assert got == (
+            "Queued Luther by Kendrick Lamar, GNX by Kendrick Lamar and TV Off by Kendrick Lamar."
+        )
+
+    def test_a_missing_song_does_not_stop_the_rest(self):
+        client = MultiTrackClient({"luther": LUTHER, "tv off": TV_OFF})
+        got = call(dispatch_for(client), "queue_track", {"songs": ["luther", "zzzz", "tv off"]})
+        assert client.queued == ["spotify:track:luther", "spotify:track:tvoff"]
+        assert "Couldn't find 'zzzz'" in got
+
+    def test_accepts_a_single_query_string_too(self):
+        client = FakeSpotifyClient(results={"track": [GNX]})
+        call(dispatch_for(client), "queue_track", {"query": "GNX"})
+        assert client.queued == ["spotify:track:gnx"]
+
+    def test_nothing_found(self):
+        client = FakeSpotifyClient(devices=[PHONE])
+        got = call(dispatch_for(client), "queue_track", {"songs": ["zzzz"]})
+        assert "Couldn't find" in got and client.queued == []
+
+    def test_empty_list(self):
+        assert "No song" in call(dispatch_for(FakeSpotifyClient()), "queue_track", {"songs": [" "]})
+
+    def test_nothing_playing_is_spoken_not_raised(self):
+        client = FakeSpotifyClient(results={"track": [GNX]},
+                                   error=FakeSpotifyError(404, "No active device found"))
+        got = call(dispatch_for(client), "queue_track", {"songs": ["GNX"]})
+        assert "Nothing's playing" in got
+
+
 class TestControls:
     def test_pause(self):
         client = FakeSpotifyClient()
@@ -290,3 +355,74 @@ class TestEnvTokenStore:
         assert "# keep me" in text and "HF_TOKEN=hf_x" in text
         line = next(ln for ln in text.splitlines() if ln.startswith("SPOTIFY_TOKEN_JSON="))
         assert json.loads(line.split("=", 1)[1].strip("'")) == token
+
+
+class FakeVolumeClient:
+    """Just the surface MusicDucker touches: current playback and volume."""
+
+    def __init__(self, playback=None, fail=False):
+        self._playback = playback
+        self._fail = fail
+        self.volumes: list[tuple[int, str | None]] = []
+
+    def current_playback(self):
+        if self._fail:
+            raise FakeSpotifyError(503, "unavailable")
+        return self._playback
+
+    def volume(self, volume_percent, device_id=None):
+        self.volumes.append((volume_percent, device_id))
+
+
+def playing(volume=70, is_playing=True, supports_volume=True):
+    return {
+        "is_playing": is_playing,
+        "device": {"id": "bot-id", "volume_percent": volume, "supports_volume": supports_volume},
+    }
+
+
+def speak(ducker, raise_inside=False):
+    async def run():
+        async with ducker.ducked():
+            if raise_inside:
+                raise RuntimeError("playback blew up")
+
+    asyncio.run(run())
+
+
+class TestMusicDucker:
+    def test_ducks_then_restores(self):
+        client = FakeVolumeClient(playing(volume=70))
+        speak(MusicDucker(client, level=20))
+        assert client.volumes == [(20, "bot-id"), (70, "bot-id")]
+
+    def test_leaves_paused_music_alone(self):
+        client = FakeVolumeClient(playing(is_playing=False))
+        speak(MusicDucker(client))
+        assert client.volumes == []
+
+    def test_leaves_nothing_playing_alone(self):
+        client = FakeVolumeClient(None)
+        speak(MusicDucker(client))
+        assert client.volumes == []
+
+    def test_never_turns_quiet_music_up(self):
+        client = FakeVolumeClient(playing(volume=10))
+        speak(MusicDucker(client, level=20))
+        assert client.volumes == []
+
+    def test_skips_devices_without_volume_control(self):
+        client = FakeVolumeClient(playing(supports_volume=False))
+        speak(MusicDucker(client))
+        assert client.volumes == []
+
+    def test_restores_even_if_playback_fails(self):
+        client = FakeVolumeClient(playing(volume=70))
+        with pytest.raises(RuntimeError):
+            speak(MusicDucker(client, level=20), raise_inside=True)
+        assert client.volumes[-1] == (70, "bot-id")
+
+    def test_spotify_failure_never_blocks_speech(self):
+        client = FakeVolumeClient(fail=True)
+        speak(MusicDucker(client))  # must not raise
+        assert client.volumes == []

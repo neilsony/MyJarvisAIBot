@@ -1,5 +1,7 @@
 # DmillsGPT (MyJarvisAIBot)
 
+![MillsGPT web UI](docs/ui-screenshot.png)
+
 A voice-driven personal AI assistant with a distinct personality — cloned from a real podcast host — that talks back in real time, remembers what you tell it, manages your Google Calendar, and answers questions grounded in a searchable corpus. It runs locally on macOS, speaks through a voice-clone TTS engine, and is progressively getting an Arduino-driven physical body.
 
 ```
@@ -39,12 +41,12 @@ The system is three independent subsystems with deliberately narrow interfaces:
 ### Agent (`brain/`)
 
 - **Native tool-calling loop** against OpenRouter (default model: `z-ai/glm-5.3-flash`, OpenAI-compatible API). The loop lives in `brain/agent.py`: send messages → execute requested tools → feed results back, until the model answers.
-- **Twelve on-demand tools**, no context bloat — nothing is auto-injected:
+- **Thirteen on-demand tools**, no context bloat — nothing is auto-injected:
   - `search_show` — semantic retrieval over the "Canon" store (transcribed, chunked, and embedded show corpus in SQLite + `sqlite-vec`).
   - `remember` / `recall` — persistent long-term memory, stored locally in SQLite.
   - `load_skill` — pulls the full text of a named skill file (markdown with frontmatter) only when a turn actually needs it. The agent's system prompt stays small; a spoken-reply bot cannot afford pages of procedure on every turn.
   - `get_calendar_events`, `create_calendar_event`, `update_calendar_event` — native Google Calendar integration (Google's own client libraries, not an MCP server). OAuth credentials live as environment variables; the access token auto-refreshes and rewrites itself into `.env`.
-  - `play_music`, `pause_music`, `resume_music`, `skip_track` — Spotify playback control (optional; Premium required). Plays through the bot's own headless player, "DmillsGPT" (librespot, started with the Brain), or whatever device has Spotify open if that isn't set up. Playback only: no library or playlist edits.
+  - `play_music`, `queue_track`, `pause_music`, `resume_music`, `skip_track` — Spotify playback control (optional; Premium required). Plays through the bot's own headless player, "DmillsGPT" (librespot, started with the Brain), or whatever device has Spotify open if that isn't set up. Playback only: no library or playlist edits.
   - `web_search` — live web grounding for anything the corpus can't answer.
 - **Strict, safe tool surface** — the agent has no filesystem access, no shell, no editing. Everything is read-mostly: search, remember, recall, calendar, music playback.
 - **Persona** — a tuned voice register (`brain/persona/register.md`) plus user-profile context (`profile/`), including a fandom file that shapes tone without ever being treated as a source of facts.
@@ -53,6 +55,7 @@ The system is three independent subsystems with deliberately narrow interfaces:
 ### Voice loop (`body/`)
 
 - **Push-to-talk conversation**: press Enter to record, Enter to send. Audio → Deepgram (batch STT) → agent → Chatterbox-Turbo TTS → speakers.
+- **Web UI** (`body/ui/`): the voice loop also serves a local page at `http://127.0.0.1:8765` (opened automatically; `--no-ui` skips it) — a big picture of Darrick over the NOTB art, a ring showing the Body state (listening, thinking, speaking), and a Talk button (or space) that works alongside Enter. The two pictures go in `data/ui/` as `darrick.*` and `notb.*` (gitignored); without them the page shows a placeholder.
 - **Persistent TTS daemon** (`brain/tts/chatterbox_server.py`): Chatterbox-Turbo loads once into a Unix-socket daemon and stays warm, so per-utterance latency skips the ~30 s model load. The daemon auto-starts on first use.
 - **Voice cloning**: all replies are synthesized in Darrick's voice, zero-shot from a single 33 s reference clip.
 - **Hardware-ready**: `body/` includes pyserial support for the Arduino chassis under `arduino/`.
@@ -119,7 +122,8 @@ python -m pipeline fetch-reference <url>  # one arbitrary clip as reference audi
 
 ```bash
 python -m brain.cli                       # text mode — the dev loop for the agent
-python -m body.voice_loop                 # voice mode — push-to-talk conversation
+python -m body.voice_loop                 # voice mode — push-to-talk, plus the web UI
+python -m body.voice_loop --no-ui         # voice mode, terminal only
 python -m brain.authorize_google          # one-time Google OAuth consent → token into .env
 python -m brain.tts.chatterbox_client "text"
                                           # TTS smoke test via the daemon

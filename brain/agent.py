@@ -11,6 +11,7 @@ hit.
 from __future__ import annotations
 
 import re
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,12 @@ from brain.spotify_player import LibrespotPlayer, connect_player
 from brain.store.db import Store
 from brain.tools.calendar import build_calendar_dispatch, calendar_schemas, connect_calendar
 from brain.tools.jarvis_tools import build_tool_dispatch, build_tool_schemas, parse_tool_arguments
-from brain.tools.spotify import build_spotify_dispatch, connect_spotify, spotify_schemas
+from brain.tools.spotify import (
+    MusicDucker,
+    build_spotify_dispatch,
+    connect_spotify,
+    spotify_schemas,
+)
 from brain.tools.web_search import build_web_search_dispatch, web_search_schemas
 
 __all__ = ["Jarvis", "load_persona"]
@@ -38,8 +44,11 @@ _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 # not better: past a point it dilutes the register with other hosts' voices.
 MEMORY_RESULTS = 3
 
-# Voice replies are short; a long tool-call chain means a long silence.
-MAX_TOOL_ROUNDS = 6
+# Model round trips per turn, not searches: one round can run several tool
+# calls at once. Room for a Canon question that digs through a few searches
+# and follow-ups; each round is a second or two of silence in voice mode, so
+# not unlimited. Running out isn't a failure either — see Jarvis.ask.
+MAX_TOOL_ROUNDS = 10
 
 
 @dataclass(frozen=True)
@@ -102,6 +111,7 @@ class Jarvis:
         # playback tools. The bot's own player (librespot) is optional on top
         # of that — without it, playback goes to whatever has Spotify open.
         self._spotify_player: LibrespotPlayer | None = None
+        self._music_ducker: MusicDucker | None = None
         spotify = connect_spotify(
             settings.spotify_client_id,
             settings.spotify_client_secret,
@@ -110,6 +120,7 @@ class Jarvis:
         )
         if spotify is not None:
             self._spotify_player = connect_player(settings.data_dir)
+            self._music_ducker = MusicDucker(spotify)
             self._tool_schemas += spotify_schemas()
             self._tool_dispatch |= build_spotify_dispatch(
                 spotify, settings.spotify_device_name, self._spotify_player
@@ -166,6 +177,13 @@ class Jarvis:
             await self._client.close()
             self._client = None
 
+    def speaking(self) -> AbstractAsyncContextManager[None]:
+        """Wrap playback of a spoken reply: music is turned down for its
+        duration, then restored. A no-op without Spotify."""
+        if self._music_ducker is None:
+            return nullcontext()
+        return self._music_ducker.ducked()
+
     async def ask(self, message: str) -> str:
         """Send one turn and return the reply text."""
         if self._client is None:
@@ -193,7 +211,18 @@ class Jarvis:
                     {"role": "tool", "tool_call_id": call.id, "content": result}
                 )
 
-        return "Sorry, that took too many steps to work out — try asking it differently."
+        # Out of rounds. Answer from what the searches already turned up rather
+        # than throw it all away: one last call with tools switched off.
+        response = await self._client.chat.completions.create(
+            model=self.settings.model,
+            messages=[{"role": "system", "content": self._system_prompt}, *self._history],
+            tools=self._tool_schemas,
+            tool_choice="none",
+        )
+        choice = response.choices[0].message
+        self._history.append(choice.model_dump(exclude_none=True))
+        reply = (choice.content or "").strip()
+        return reply or "Sorry, that took too many steps to work out — try asking it differently."
 
     async def _run_tool(self, name: str, raw_arguments: str) -> str:
         fn = self._tool_dispatch.get(name)

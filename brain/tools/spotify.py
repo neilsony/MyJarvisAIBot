@@ -3,7 +3,7 @@
 Deliberately *not* an MCP server, for the same reason as Calendar: a live OAuth
 token for a real account stays inside code you own.
 
-**Playback only** — play, pause, resume, skip. No volume, no queue, no liking
+**Playback only** — play, queue, pause, resume, skip. No volume tool, no liking
 tracks or editing playlists. Playing the wrong song is undone in a second;
 a misheard "add this to my running playlist" leaves a quiet mess nobody
 notices for weeks. That's the same blast-radius argument that keeps Calendar
@@ -35,7 +35,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ __all__ = [
     "REDIRECT_URI",
     "SCOPES",
     "EnvTokenStore",
+    "MusicDucker",
     "build_spotify_dispatch",
     "connect_spotify",
     "make_auth_manager",
@@ -65,6 +67,9 @@ KINDS = ("track", "artist", "album", "playlist")
 # list after (re)starting it. librespot usually registers in 2-4 seconds.
 PLAYER_WAIT_SECONDS = 15.0
 PLAYER_POLL_SECONDS = 0.5
+
+# Music level while DmillsGPT is talking, in Spotify's 0-100 volume.
+DUCK_VOLUME_PERCENT = 20
 
 
 class EnvTokenStore:
@@ -209,7 +214,87 @@ def spotify_schemas() -> list[dict[str, Any]]:
                 "parameters": no_args,
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "queue_track",
+                "description": (
+                    "Add one or more songs to play after the current one, without "
+                    "interrupting it. Use for 'queue X', 'play X next', 'add X, Y and "
+                    "Z after this'. Put EVERY requested song in one call, in the order "
+                    "asked — never one call per song. Songs only: Spotify's queue "
+                    "can't take a whole artist or album. If nothing is playing, use "
+                    "play_music for the first song instead."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "songs": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Each song as a search query, in play order, e.g. "
+                                "['Luther Kendrick Lamar', 'TV Off']."
+                            ),
+                        }
+                    },
+                    "required": ["songs"],
+                },
+            },
+        },
     ]
+
+
+class MusicDucker:
+    """Turns Spotify down while the bot talks, then puts it back.
+
+    Voice mode only — the text CLI never speaks, so never ducks. Works on
+    whichever device is playing, not just the bot's own player: music on
+    your phone talking over the robot is the same problem.
+    """
+
+    def __init__(self, client: Any, level: int = DUCK_VOLUME_PERCENT) -> None:
+        self._client = client
+        self._level = level
+
+    def duck(self) -> tuple[str | None, int] | None:
+        """Lower the volume if music is playing. Returns what to restore."""
+        playback = self._client.current_playback()
+        if not playback or not playback.get("is_playing"):
+            return None
+        device = playback.get("device") or {}
+        volume = device.get("volume_percent")
+        if volume is None or not device.get("supports_volume", True) or volume <= self._level:
+            return None
+        device_id = device.get("id")
+        self._client.volume(self._level, device_id=device_id)
+        return device_id, int(volume)
+
+    def restore(self, saved: tuple[str | None, int]) -> None:
+        device_id, volume = saved
+        self._client.volume(volume, device_id=device_id)
+
+    @asynccontextmanager
+    async def ducked(self) -> AsyncIterator[None]:
+        # Ducking is a nicety; it must never cost a spoken reply. Any Spotify
+        # failure here is swallowed and the bot just talks over the music.
+        try:
+            saved = await asyncio.to_thread(self.duck)
+        except Exception:
+            saved = None
+        try:
+            yield
+        finally:
+            if saved is not None:
+                with suppress(Exception):
+                    await asyncio.to_thread(self.restore, saved)
+
+
+def _join(items: list[str]) -> str:
+    """'a', 'a and b', 'a, b and c' — how a list sounds read aloud."""
+    if len(items) <= 1:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
 def _describe_error(exc: Exception) -> str:
@@ -334,6 +419,31 @@ def build_spotify_dispatch(
         client.next_track()
         return "Skipped."
 
+    def _queue(songs: list[str]) -> str:
+        queued: list[str] = []
+        missing: list[str] = []
+        for query in songs:
+            item = _search(query, "track")
+            if item is None:
+                missing.append(query)
+                continue
+            try:
+                # No device id: the queue belongs to whatever is playing now.
+                client.add_to_queue(item["uri"])
+            except Exception as exc:
+                # Usually "nothing playing", which fails every song alike —
+                # stop, and say what did make it in before the failure.
+                done = f"Queued {_join(queued)}, then: " if queued else ""
+                return done + _describe_error(exc)
+            queued.append(_label(item))
+
+        parts = []
+        if queued:
+            parts.append(f"Queued {_join(queued)}.")
+        if missing:
+            parts.append(f"Couldn't find {_join([repr(m) for m in missing])} on Spotify.")
+        return " ".join(parts)
+
     async def _run(fn: Callable[..., str], *args: Any) -> str:
         # spotipy is synchronous; a blocking HTTP call inside the agent loop
         # would stall the voice path mid-turn. And a failed call shouldn't
@@ -361,9 +471,21 @@ def build_spotify_dispatch(
     async def skip_track(args: dict[str, Any]) -> str:
         return await _run(_skip)
 
+    async def queue_track(args: dict[str, Any]) -> str:
+        raw = args.get("songs")
+        if raw is None and args.get("query"):
+            raw = [args["query"]]  # a model that ignored the schema's list
+        if isinstance(raw, str):
+            raw = [raw]
+        songs = [str(s).strip() for s in raw or [] if str(s).strip()]
+        if not songs:
+            return "No song given."
+        return await _run(_queue, songs)
+
     return {
         "play_music": play_music,
         "pause_music": pause_music,
         "resume_music": resume_music,
         "skip_track": skip_track,
+        "queue_track": queue_track,
     }

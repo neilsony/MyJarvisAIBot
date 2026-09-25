@@ -46,3 +46,4 @@ class TestFakeTTS:
 
     def test_close_is_safe_to_call(self):
         FakeTTS().close()
+
